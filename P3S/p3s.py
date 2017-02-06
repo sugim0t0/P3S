@@ -1,10 +1,18 @@
 #!/usr/bin/env python
 
 ''' P3S (Python Parallel Process Simulator)
+
+ Modification History:
+ ===========================================================
+ Date           Version   Description
+ ===========================================================
+  6 Feb. 2017   1.1       Change send channel time from sync to update
+ 15 Jan. 2017   1.0       Creation
+ -----------------------------------------------------------
 '''
 
-__version__ = "1.0"
-__date__    = "15 Jan. 2017"
+__version__ = "1.1"
+__date__    = "6 Feb. 2017"
 __author__  = "Shun SUGIMOTO <sugimoto.shun@gmail.com>"
 
 class Process():
@@ -45,7 +53,7 @@ class Process():
             if self.current_trans == None:
                 for trans in self.current_loc.transitions:
                     if trans.guard(global_cycle+(accuracy_cycle-runnable_cycle)):
-                        trans.sync(global_cycle+(accuracy_cycle-runnable_cycle))
+                        trans.sync()
                         self.current_trans = trans
                         self.current_trans.rest_cycle = -1
                         break
@@ -62,7 +70,7 @@ class Process():
                 else:
                     runnable_cycle -= self.current_trans.rest_cycle
                     self.current_trans.rest_cycle = 0
-            self.current_trans.update()
+            self.current_trans.update(global_cycle+(accuracy_cycle-runnable_cycle))
             self.current_loc = self.current_trans.to_location
             print("@" + self.name + " C:{0} : change location to ".format(global_cycle+(accuracy_cycle-runnable_cycle)) + self.current_loc.name)
             self.current_trans = None
@@ -93,16 +101,16 @@ class Location():
 
 class Trans():
 
-    def __init__(self, proc, sync_channel, b_send, to_location):
+    def __init__(self, proc, channel, b_send, to_location):
         '''
         Constructor of Trans class.
             [1] proc : Process class object this Trans class object belongs
-            [2] sync_channel : Channel class object included in guard condition
-            [3] b_send : Whether this is send (not recv) part if sync channel exists
+            [2] channel : Channel class object
+            [3] b_send : Whether this is send (not recv) part if channel exists
             [4] to_location : Destination Location class object of this tansition
         '''
         self.proc = proc
-        self.sync_channel = sync_channel
+        self.channel = channel
         self.b_send = b_send
         self.to_location = to_location
         self.rest_cycle = 0
@@ -115,26 +123,23 @@ class Trans():
           False > Not be able to transit
             [1] global_cycle : Current cycle
         '''
-        if self.sync_channel:
-            if self.b_send:
-                if self.sync_channel.b_sent:
-                    return False
-            else:
-                if not self.sync_channel.b_sent or self.sync_channel.sent_cycle > global_cycle:
+        if self.channel:
+            if not self.b_send:
+                if not self.channel.b_sent or self.channel.sent_cycle > global_cycle:
                     return False
         return True
 
-    def sync(self, global_cycle):
+    def sync(self):
         '''
         Synchronous communication of this transition.
-            [1] global_cycle : current_cycle
         '''
         pass
 
-    def update(self):
+    def update(self, global_cycle):
         '''
         Update action of this transition.
         This action is executed after transition delay.
+            [1] global_cycle : current_cycle
         '''
         pass
 
@@ -391,7 +396,7 @@ class P3S():
         '''
         Start this Simulation.
         '''
-        if len(self.hw) == 0 or self.cpu == None:
+        if len(self.hw) == 0 and self.cpu == None:
             return False
         while True:
             # run HW models

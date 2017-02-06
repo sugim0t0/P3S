@@ -7,45 +7,43 @@ sram_unused = 4
 
 # DMAC model
 class TransRecvDmacStart(p3s.Trans):
-    def sync(self, current_cycle):
-        self.proc.s = self.sync_channel.recv()
+    def sync(self):
+        self.proc.s = self.channel.recv()
     def get_delay(self):
         return 10 + self.proc.s * 10
 
 class TransSendDmacEnd(p3s.Trans):
-    def sync(self, current_cycle):
-        self.sync_channel.send(self.proc.s, current_cycle)
+    def update(self, current_cycle):
+        self.channel.send(self.proc.s, current_cycle)
 
 # INTC model
 class TransRecvDmacEnd(p3s.Trans):
-    def sync(self, current_cycle):
-        self.proc.s = self.sync_channel.recv()
-    def update(self):
+    def sync(self):
+        self.proc.s = self.channel.recv()
+    def update(self, current_cycle):
         self.proc.p += 1
         self.proc.e += 1
 
 class TransSendIDmacEnd(p3s.Trans):
     def guard(self, current_cycle):
-        if super().guard(current_cycle) and self.proc.e > 0:
+        if self.proc.e > 0:
             return True
         else:
             return False
-    def sync(self, current_cycle):
-        self.sync_channel.send(1, current_cycle)
-    def update(self):
+    def update(self, current_cycle):
         self.proc.e -= 1
+        self.channel.send(1, current_cycle)
 
 class TransSendIDataPrepared(p3s.Trans):
     def guard(self, current_cycle):
-        if super().guard(current_cycle) and self.proc.p > 0:
+        if self.proc.p > 0:
             return True
         else:
             return False
-    def sync(self, current_cycle):
-        self.sync_channel.send(self.proc.s, current_cycle)
-    def update(self):
-        self.proc.s = 0
+    def update(self, current_cycle):
         self.proc.p -= 1
+        self.channel.send(self.proc.s, current_cycle)
+        self.proc.s = 0
 
 class IntcProc(p3s.Process):
     def __init__(self, name):
@@ -65,11 +63,11 @@ class TransPrepareMalloc(p3s.Trans):
 class TransMalloc(p3s.Trans):
     def guard(self, current_cycle):
         global sram_unused
-        if super().guard(current_cycle) and sram_unused > 0:
+        if sram_unused > 0:
             return True
         else:
             return False
-    def update(self):
+    def update(self, current_cycle):
         global sram_unused
         if sram_unused < self.proc.d:
             self.proc.s = sram_unused
@@ -86,13 +84,13 @@ class TransMalloc(p3s.Trans):
         return 10 + s * 5
 
 class TransSendDmacStart(p3s.Trans):
-    def sync(self, current_cycle):
-        self.sync_channel.send(self.proc.s, current_cycle)
+    def update(self, current_cycle):
+        self.channel.send(self.proc.s, current_cycle)
 
 class TransRecvIDmacEnd(p3s.Trans):
-    def sync(self, current_cycle):
-        self.sync_channel.recv()
-    def update(self):
+    def sync(self):
+        self.channel.recv()
+    def update(self, current_cycle):
         self.proc.d -= self.proc.s
 
 class DataTransferTask(p3s.Process):
@@ -108,12 +106,12 @@ class TransRecvIDataPrepared(p3s.Trans):
             return True
         else:
             return False
-    def sync(self, current_cycle):
-        self.proc.s = self.sync_channel.recv()
+    def sync(self):
+        self.proc.s = self.channel.recv()
 
 
 class TransDataRead(p3s.Trans):
-    def update(self):
+    def update(self, current_cycle):
         self.proc.d -= self.proc.s
     def get_delay(self):
         return 10 + self.proc.s * 5
@@ -124,7 +122,7 @@ class TransDataFree(p3s.Trans):
             return True
         else:
             return False
-    def update(self):
+    def update(self, current_cycle):
         global sram_unused
         sram_unused += 1
         self.proc.s -= 1
