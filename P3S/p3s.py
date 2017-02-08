@@ -6,14 +6,17 @@
  ===========================================================
  Date           Version   Description
  ===========================================================
+  9 Feb. 2017   1.2       Add Signal class
   6 Feb. 2017   1.1       Change send channel time from sync to update
  15 Jan. 2017   1.0       Creation
  -----------------------------------------------------------
 '''
 
-__version__ = "1.1"
-__date__    = "6 Feb. 2017"
+__version__ = "1.2"
+__date__    = "9 Feb. 2017"
 __author__  = "Shun SUGIMOTO <sugimoto.shun@gmail.com>"
+
+from P3S import cfg_p3s
 
 class Process():
 
@@ -26,6 +29,7 @@ class Process():
         self.locations = []
         self.current_loc = None
         self.current_trans = None
+        self.trans_state = None
         self.b_finished = False
 
     def add_location(self, loc, b_init):
@@ -55,12 +59,13 @@ class Process():
                     if trans.guard(global_cycle+(accuracy_cycle-runnable_cycle)):
                         trans.sync()
                         self.current_trans = trans
-                        self.current_trans.rest_cycle = -1
+                        self.trans_state = cfg_p3s.TransState.TRANS_BEFORE_GET_DELAY
                         break
                 else: # There is no transition to be able
                     return runnable_cycle
-            if self.current_trans.rest_cycle < 0:
+            if self.trans_state == cfg_p3s.TransState.TRANS_BEFORE_GET_DELAY:
                 self.current_trans.rest_cycle = self.current_trans.get_delay()
+                self.trans_state = cfg_p3s.TransState.TRANS_BEFORE_UPDATE
                 if self.current_trans.rest_cycle < 0:
                     return -1
             if runnable_cycle >= 0:
@@ -70,10 +75,13 @@ class Process():
                 else:
                     runnable_cycle -= self.current_trans.rest_cycle
                     self.current_trans.rest_cycle = 0
-            self.current_trans.update(global_cycle+(accuracy_cycle-runnable_cycle))
+            if self.trans_state == cfg_p3s.TransState.TRANS_BEFORE_UPDATE:
+                self.current_trans.update(global_cycle+(accuracy_cycle-runnable_cycle))
+                self.trans_state = cfg_p3s.TransState.TRANS_AFTER_UPDATE
             self.current_loc = self.current_trans.to_location
             print("@" + self.name + " C:{0} : change location to ".format(global_cycle+(accuracy_cycle-runnable_cycle)) + self.current_loc.name)
             self.current_trans = None
+            self.trans_state = None
             if self.current_loc.b_end:
                 self.b_finished = True
                 return runnable_cycle
@@ -138,16 +146,80 @@ class Trans():
     def update(self, global_cycle):
         '''
         Update action of this transition.
+        Return value:
+          True  > An event occured (ex: set/wait signal)
+          False > No event occurs
         This action is executed after transition delay.
             [1] global_cycle : current_cycle
         '''
-        pass
+        return False
 
     def get_delay(self):
         '''
         Get delay cycle of this transition.
         '''
         return 0
+
+
+class Task(Process):
+
+    def __init__(self, name, priority, signal):
+        '''
+        Constructor of Task class.
+            [1] name : name of Task class object
+            [2] priority : task priority
+        '''
+        super().__init__(name)
+        self.priority = priority
+        self.task_state = cfg_p3s.TaskState.READY
+        self.signal = signal
+        self.wait_sig_id = None
+
+    def restart(self, global_cycle, accuracy_cycle):
+        '''
+        Restart this Process.
+        Return value is rest of runnable cycle
+            [1] global_cycle   : Current cycle
+            [2] accuracy_cycle : Accuracy cycle (runnable cycle)
+        '''
+        runnable_cycle = accuracy_cycle
+        if self.current_loc == None:
+            return -1
+        # State transition loop
+        while True:
+            if self.current_trans == None:
+                for trans in self.current_loc.transitions:
+                    if trans.guard(global_cycle+(accuracy_cycle-runnable_cycle)):
+                        trans.sync()
+                        self.current_trans = trans
+                        self.trans_state = cfg_p3s.TransState.TRANS_BEFORE_GET_DELAY
+                        break
+                else: # There is no transition to be able
+                    return runnable_cycle
+            if self.trans_state == cfg_p3s.TransState.TRANS_BEFORE_GET_DELAY:
+                self.current_trans.rest_cycle = self.current_trans.get_delay()
+                self.trans_state = cfg_p3s.TransState.TRANS_BEFORE_UPDATE
+                if self.current_trans.rest_cycle < 0:
+                    return -1
+            if runnable_cycle >= 0:
+                if self.current_trans.rest_cycle > runnable_cycle:
+                    self.current_trans.rest_cycle -= runnable_cycle
+                    return 0
+                else:
+                    runnable_cycle -= self.current_trans.rest_cycle
+                    self.current_trans.rest_cycle = 0
+            if self.trans_state == cfg_p3s.TransState.TRANS_BEFORE_UPDATE:
+                b_event = self.current_trans.update(global_cycle+(accuracy_cycle-runnable_cycle))
+                self.trans_state = cfg_p3s.TransState.TRANS_AFTER_UPDATE
+                if b_event:
+                    return runnable_cycle
+            self.current_loc = self.current_trans.to_location
+            print("@" + self.name + " C:{0} : change location to ".format(global_cycle+(accuracy_cycle-runnable_cycle)) + self.current_loc.name)
+            self.current_trans = None
+            self.trans_state = None
+            if self.current_loc.b_end:
+                self.b_finished = True
+                return runnable_cycle
 
 
 class Model():
@@ -192,7 +264,7 @@ class HW_Model(Model):
         if rest_cycle >= 0:
             self.cycle += runnable_cycle
         else:
-            print("error @restart")
+            print("[Error] Failed in restart().")
         if self.core.b_finished:
             return True
         else:
@@ -211,118 +283,83 @@ class CPU_Model(Model):
         super().__init__(name, clock)
         self.task_switch_delay = task_switch_delay
         self.tasks = []
-        self.priority = []
         self.current_task = None
         self.next_task = None
         self.rest_task_switch_delay = 0
+        self.num_of_task_switch = 0
 
     def run(self, runnable_cycle):
         '''
-        Run first argument cycle.
+        Run task for first argument cycle.
             [1] runnable_cycle : cycle to be able to run
         '''
         rest_cycle = runnable_cycle
         running_cycle = 0
-        if self.next_task:
-            if rest_cycle > self.rest_task_switch_delay:
-                self.current_task = self.next_task
-                self.next_task = None
-                self.rest_task_switch_delay = 0
-                rest_cycle = self.current_task.restart((self.cycle+self.rest_task_switch_delay), rest_cycle)
-                running_cycle = (runnable_cycle-rest_cycle)
-                if self.current_task.b_finished:
-                    self.cycle += (runnable_cycle - rest_cycle)
-                    return True
-                if rest_cycle == 0:
-                    self.cycle += runnable_cycle
-                    if self.current_task.b_finished:
-                        return True
-                    else:
-                        return False
-            else:
-                self.cycle += runnable_cycle
-                self.rest_task_switch_delay -= rest_cycle
-                return False
-        for task in self.tasks:
-            if task != self.current_task:
-                # Check whether this task is able to run
-                b_able_to_run = True
-                if task.current_trans == None:
-                    b_able_to_run = False
-                    for trans in task.current_loc.transitions:
-                        b_able_to_run = trans.guard(self.cycle+running_cycle)
-                        if b_able_to_run:
-                            break
-                if b_able_to_run:
-                    # Task switch
-                    if rest_cycle > self.task_switch_delay:
-                        rest_cycle -= self.task_switch_delay
-                        running_cycle += self.task_switch_delay
-                        self.next_task = None
+        # ISR (Interrupt Service Routines)
+        # To Be Modified!
+        # Tasks
+        while True:
+            if self.current_task == None:
+                if self.rest_task_switch_delay > 0:
+                    # During task switching
+                    if rest_cycle > self.rest_task_switch_delay:
                         self.rest_task_switch_delay = 0
-                        self.current_task = task
-                        rest_cycle = task.restart((self.cycle+running_cycle), rest_cycle)
+                        rest_cycle -= self.rest_task_switch_delay
+                        running_cycle += self.rest_task_switch_delay
                     else:
-                        self.next_task = task
-                        self.rest_task_switch_delay = self.task_switch_delay - rest_cycle
                         self.cycle += runnable_cycle
+                        self.rest_task_switch_delay -= rest_cycle
                         return False
-            else:
-                rest_cycle = task.restart((self.cycle+running_cycle), rest_cycle)
-            if task.b_finished:
+                for task in self.tasks:
+                    if task.task_state == cfg_p3s.TaskState.READY:
+                        self.current_task = task
+                        self.current_task.task_state = cfg_p3s.TaskState.RUNNING
+                        break
+                else: # All tasks are WAITING
+                    self.cycle += runnable_cycle
+                    return False
+            # task restart
+            rest_cycle = self.current_task.restart((self.cycle + running_cycle), rest_cycle)
+            if self.current_task.b_finished:
                 self.cycle += (runnable_cycle - rest_cycle)
                 return True
+            else:
+                # Find the highest priority task (one's task_state is READY or RUNNING)
+                for task in self.tasks:
+                    if task.task_state == cfg_p3s.TaskState.RUNNING:
+                        # No task switch
+                        break;
+                    elif task.task_state == cfg_p3s.TaskState.READY:
+                        # Task switch
+                        self.rest_task_switch_delay = self.task_switch_delay
+                        if self.current_task.task_state == cfg_p3s.TaskState.RUNNING:
+                            self.current_task.task_state = cfg_p3s.TaskState.READY
+                        self.current_task = None
+                        self.num_of_task_switch += 1
+                        break;
+                else: # All tasks are WAITING
+                    self.cycle += runnable_cycle
+                    return False
             if rest_cycle == 0:
                 self.cycle += runnable_cycle
                 return False
             running_cycle = runnable_cycle - rest_cycle
-        self.cycle += runnable_cycle
-        return False
 
-    def add_task(self, proc, priority):
+    def add_task(self, task):
         '''
         Add new task to this CPU.
-            [1] proc : Process class object declared task
+        and sort tasks in ascending order of task priority.
+            [1] task : Task class object
         '''
-        if len(self.priority) > 0:
-            for x in range(0, len(self.priority)):
-                if priority > self.priority[x]:
-                    self.tasks.insert(x, proc)
-                    self.priority.insert(x, priority)
-                    if x == 0:
-                        self.current_task = proc
+        if len(self.tasks) > 0:
+            for x in range(0, len(self.tasks)):
+                if task.priority > self.tasks[x].priority:
+                    self.tasks.insert(x, task)
                     break
             else:
-                self.tasks.append(proc)
-                self.priority.append(priority)
+                self.tasks.append(task)
         else:
-            self.tasks.append(proc)
-            self.priority.append(priority)
-            self.current_task = proc
-
-
-# N/A?
-class SharedMemory():
-
-    def __init__(self, name):
-        '''
-        Constructor of SharedMemory class.
-            [1] name : Name of SharedMemory class object
-        '''
-        self.name = name
-        self.data = 0
-
-    def get_write_delay(self):
-        '''
-        Get delay cycle to WRITE access to this shared memory.
-        '''
-        return 0
-
-    def get_read_delay(self):
-        '''
-        Get delay cycle to READ access to this shared memory.
-        '''
-        return 0
+            self.tasks.append(task)
 
 
 class Channel():
@@ -357,6 +394,41 @@ class Channel():
         return self.data
 
 
+class Signal():
+
+    def __init__(self):
+        '''
+        Constructor of Signal class.
+        '''
+        self.wait_tasks = []
+
+    def add_signal_task(self, task):
+        '''
+        Add task to use this signal.
+            [1] task : Task class object to use this signal
+        '''
+        self.wait_tasks.append(task)
+
+    def set_signal(self, sig_id):
+        '''
+        Set OS signal.
+            [1] sig_id : signal ID
+        '''
+        for x in range(0, len(self.wait_tasks)):
+            if self.wait_tasks[x].task_state == cfg_p3s.TaskState.WAITING and self.wait_tasks[x].wait_sig_id == sig_id:
+                self.wait_tasks[x].task_state = cfg_p3s.TaskState.READY
+                self.wait_tasks[x].wait_sig_id = -1
+
+    def wait_signal(self, task, sig_id):
+        '''
+        Wait for OS signal.
+            [1] task : Task class object to wait this signal
+            [2] sig_id : signal ID
+        '''
+        task.wait_sig_id = sig_id
+        task.task_state = cfg_p3s.TaskState.WAITING
+
+
 class P3S():
 
     def __init__(self, accuracy_cycle):
@@ -384,14 +456,6 @@ class P3S():
         '''
         self.hw.append(hw)
 
-    # N/A?
-    def add_memory(self, mem):
-        '''
-        Add new shared memory to this Simulation.
-            [1] mem : SharedMemory class object to be added
-        '''
-        self.memory.append(mem)
-
     def simulate(self):
         '''
         Start this Simulation.
@@ -411,5 +475,6 @@ class P3S():
             if ret:
                 # Simulation finished
                 print("Finished cycle: %d" % self.cpu.cycle)
+                print("Task switch : %d times" % self.cpu.num_of_task_switch)
                 return
 
