@@ -21,3 +21,7 @@ class TransState(Enum):
     TRANS_BEFORE_UPDATE    = 2
     TRANS_AFTER_UPDATE     = 3
 
+# Signal
+SIGNAL_ID_NO_WAIT = -1
+SIGNAL_INIT_PRI = -1
+

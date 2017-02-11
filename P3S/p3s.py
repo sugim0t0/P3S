@@ -6,14 +6,15 @@
  ===========================================================
  Date           Version   Description
  ===========================================================
+ 11 Feb. 2017   1.3       Signal belonged to Task
   9 Feb. 2017   1.2       Add Signal class
   6 Feb. 2017   1.1       Change send channel time from sync to update
  15 Jan. 2017   1.0       Creation
  -----------------------------------------------------------
 '''
 
-__version__ = "1.2"
-__date__    = "9 Feb. 2017"
+__version__ = "1.3"
+__date__    = "11 Feb. 2017"
 __author__  = "Shun SUGIMOTO <sugimoto.shun@gmail.com>"
 
 from P3S import cfg_p3s
@@ -109,19 +110,21 @@ class Location():
 
 class Trans():
 
-    def __init__(self, proc, channel, b_send, to_location):
+    def __init__(self, proc, channel, b_send, to_location, sig_task):
         '''
         Constructor of Trans class.
             [1] proc : Process class object this Trans class object belongs
             [2] channel : Channel class object
             [3] b_send : Whether this is send (not recv) part if channel exists
             [4] to_location : Destination Location class object of this tansition
+            [5] sig_task: signal destination task
         '''
         self.proc = proc
         self.channel = channel
         self.b_send = b_send
         self.to_location = to_location
         self.rest_cycle = 0
+        self.sig_task = sig_task
 
     def guard(self, global_cycle):
         '''
@@ -160,10 +163,13 @@ class Trans():
         '''
         return 0
 
+    def add_sig_task(self, sig_task):
+        self.sig_task = sig_task
+
 
 class Task(Process):
 
-    def __init__(self, name, priority, signal):
+    def __init__(self, name, priority):
         '''
         Constructor of Task class.
             [1] name : name of Task class object
@@ -172,8 +178,9 @@ class Task(Process):
         super().__init__(name)
         self.priority = priority
         self.task_state = cfg_p3s.TaskState.READY
-        self.signal = signal
+        self.signal = Signal()
         self.wait_sig_id = None
+        self.cpu = None
 
     def restart(self, global_cycle, accuracy_cycle):
         '''
@@ -273,20 +280,16 @@ class HW_Model(Model):
 
 class CPU_Model(Model):
 
-    def __init__(self, name, clock, task_switch_delay):
+    def __init__(self, name, clock):
         '''
         Constructor of CPU_Model class.
             [1] name  : Name of CPU_Model class object
             [2] clock : clock (MHz) of this model
-            [3] task_switch_delay : Delay (cycle) of task switch
         '''
         super().__init__(name, clock)
-        self.task_switch_delay = task_switch_delay
         self.tasks = []
         self.current_task = None
-        self.next_task = None
-        self.rest_task_switch_delay = 0
-        self.num_of_task_switch = 0
+        self.rest_delay_cycle = 0
 
     def run(self, runnable_cycle):
         '''
@@ -300,15 +303,15 @@ class CPU_Model(Model):
         # Tasks
         while True:
             if self.current_task == None:
-                if self.rest_task_switch_delay > 0:
+                if self.rest_delay_cycle > 0:
                     # During task switching
-                    if rest_cycle > self.rest_task_switch_delay:
-                        self.rest_task_switch_delay = 0
-                        rest_cycle -= self.rest_task_switch_delay
-                        running_cycle += self.rest_task_switch_delay
+                    if rest_cycle > self.rest_delay_cycle:
+                        running_cycle += self.rest_delay_cycle
+                        rest_cycle -= self.rest_delay_cycle
+                        self.rest_delay_cycle = 0
                     else:
                         self.cycle += runnable_cycle
-                        self.rest_task_switch_delay -= rest_cycle
+                        self.rest_delay_cycle -= rest_cycle
                         return False
                 for task in self.tasks:
                     if task.task_state == cfg_p3s.TaskState.READY:
@@ -320,9 +323,18 @@ class CPU_Model(Model):
                     return False
             # task restart
             rest_cycle = self.current_task.restart((self.cycle + running_cycle), rest_cycle)
-            if self.current_task.b_finished:
+            if self.current_task and self.current_task.b_finished:
                 self.cycle += (runnable_cycle - rest_cycle)
                 return True
+            elif self.rest_delay_cycle > 0:
+                if rest_cycle > self.rest_delay_cycle:
+                    rest_cycle -= self.rest_delay_cycle
+                    running_cycle += self.rest_delay_cycle
+                    self.rest_delay_cycle = 0
+                else:
+                    self.cycle += runnable_cycle
+                    self.rest_delay_cycle -= rest_cycle
+                    return False
             else:
                 # Find the highest priority task (one's task_state is READY or RUNNING)
                 for task in self.tasks:
@@ -331,11 +343,9 @@ class CPU_Model(Model):
                         break;
                     elif task.task_state == cfg_p3s.TaskState.READY:
                         # Task switch
-                        self.rest_task_switch_delay = self.task_switch_delay
                         if self.current_task.task_state == cfg_p3s.TaskState.RUNNING:
                             self.current_task.task_state = cfg_p3s.TaskState.READY
                         self.current_task = None
-                        self.num_of_task_switch += 1
                         break;
                 else: # All tasks are WAITING
                     self.cycle += runnable_cycle
@@ -351,6 +361,7 @@ class CPU_Model(Model):
         and sort tasks in ascending order of task priority.
             [1] task : Task class object
         '''
+        task.cpu = self
         if len(self.tasks) > 0:
             for x in range(0, len(self.tasks)):
                 if task.priority > self.tasks[x].priority:
@@ -400,33 +411,35 @@ class Signal():
         '''
         Constructor of Signal class.
         '''
-        self.wait_tasks = []
+        self.wait_id = cfg_p3s.SIGNAL_ID_NO_WAIT
+        self.tsk_pri = cfg_p3s.SIGNAL_INIT_PRI
 
-    def add_signal_task(self, task):
-        '''
-        Add task to use this signal.
-            [1] task : Task class object to use this signal
-        '''
-        self.wait_tasks.append(task)
-
-    def set_signal(self, sig_id):
+    def set_signal(self, dst_task, sig_id):
         '''
         Set OS signal.
-            [1] sig_id : signal ID
-        '''
-        for x in range(0, len(self.wait_tasks)):
-            if self.wait_tasks[x].task_state == cfg_p3s.TaskState.WAITING and self.wait_tasks[x].wait_sig_id == sig_id:
-                self.wait_tasks[x].task_state = cfg_p3s.TaskState.READY
-                self.wait_tasks[x].wait_sig_id = -1
-
-    def wait_signal(self, task, sig_id):
-        '''
-        Wait for OS signal.
-            [1] task : Task class object to wait this signal
+        Return value
+          True  > dst Task state is changed
+          False > dst Task state is NOT changed
+            [1] dst_task : Task class object to be notified
             [2] sig_id : signal ID
         '''
-        task.wait_sig_id = sig_id
-        task.task_state = cfg_p3s.TaskState.WAITING
+        if dst_task.task_state == cfg_p3s.TaskState.WAITING and dst_task.signal.wait_id == sig_id:
+            dst_task.task_state = cfg_p3s.TaskState.READY
+            self.wait_id = cfg_p3s.SIGNAL_ID_NO_WAIT
+            self.tsk_pri = cfg_p3s.SIGNAL_INIT_PRI
+            return True
+        else:
+            return False
+
+    def wait_signal(self, src_task, sig_id):
+        '''
+        Wait for OS signal.
+            [1] src_task : Task class object to wait
+            [2] sig_id : signal ID
+        '''
+        self.wait_id = sig_id
+        self.tsk_pri = src_task.priority
+        src_task.task_state = cfg_p3s.TaskState.WAITING
 
 
 class P3S():
@@ -475,6 +488,5 @@ class P3S():
             if ret:
                 # Simulation finished
                 print("Finished cycle: %d" % self.cpu.cycle)
-                print("Task switch : %d times" % self.cpu.num_of_task_switch)
                 return
 
