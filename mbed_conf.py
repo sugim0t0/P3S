@@ -15,7 +15,7 @@ CQ_MAX = 5
 
 CPU_CLOCK = 96 # mbed LPC1758: 96MHz
 WAIT_SIG_DELAY = 7   # Task switch delay by wait_signal
-SET_SIG_DELAY  = 3.5 # delay by set_signal
+SET_SIG_DELAY  = 3   # delay by set_signal
 
 APP_TASK_PRIORITY = cfg_p3s.TaskPriority.PRIORITY_HIGH
 CKSM_TASK_PRIORITY = cfg_p3s.TaskPriority.PRIORITY_NORMAL
