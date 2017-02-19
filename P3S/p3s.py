@@ -6,6 +6,7 @@
  ===========================================================
  Date           Version   Description
  ===========================================================
+ 19 Feb. 2017   1.4       Add ISR class
  11 Feb. 2017   1.3       Signal belonged to Task
   9 Feb. 2017   1.2       Add Signal class
   6 Feb. 2017   1.1       Change send channel time from sync to update
@@ -13,8 +14,8 @@
  -----------------------------------------------------------
 '''
 
-__version__ = "1.3"
-__date__    = "11 Feb. 2017"
+__version__ = "1.4"
+__date__    = "19 Feb. 2017"
 __author__  = "Shun SUGIMOTO <sugimoto.shun@gmail.com>"
 
 from P3S import cfg_p3s
@@ -229,6 +230,40 @@ class Task(Process):
                 return runnable_cycle
 
 
+class ISR(Task):
+
+    def __init__(self, name, priority):
+        '''
+        Constructor of ISR class.
+            [1] name : name of Task class object
+            [2] priority : task priority
+        '''
+        super().__init__(name, priority)
+        self.task_state = cfg_p3s.TaskState.WAITING
+        self.init_loc = None
+
+    def interrupt(self, current_cycle):
+        '''
+        Interrupt trigger.
+        '''
+        if not self.current_loc == self.init_loc:
+            return False
+        for trans in self.init_loc.transitions:
+            if trans.guard(current_cycle):
+                return True
+        else:
+            return False
+
+    def add_location(self, loc, b_init):
+        '''
+        Add new location to this Process.
+            [1] loc    : Location class object
+            [2] b_init : Whether this location is initial location
+        '''
+        super().add_location(loc, b_init)
+        if b_init:
+            self.init_loc = loc
+
 class Model():
 
     def __init__(self, name, clock):
@@ -245,6 +280,7 @@ class Model():
         '''
         Run first argument cycle.
         This function is used as abstract function.
+        (MUST be overrided)
             [1] runnable_cycle : cycle to be able to run
         '''
         pass
@@ -289,7 +325,10 @@ class CPU_Model(Model):
         super().__init__(name, clock)
         self.tasks = []
         self.current_task = None
-        self.rest_delay_cycle = 0
+        self.rest_task_cycle = 0
+        self.isrs = []
+        self.current_isr = None
+        self.rest_isr_cycle = 0
 
     def run(self, runnable_cycle):
         '''
@@ -298,20 +337,66 @@ class CPU_Model(Model):
         '''
         rest_cycle = runnable_cycle
         running_cycle = 0
-        # ISR (Interrupt Service Routines)
-        # To Be Modified!
+        # ISRs (Interrupt Service Routines)
+        if self.current_isr == None and self.rest_isr_cycle > 0:
+            if rest_cycle > self.rest_isr_cycle:
+                running_cycle += self.rest_isr_cycle
+                rest_cycle -= self.rest_isr_cycle
+                self.rest_isr_cycle = 0
+            else:
+                self.cycle += runnable_cycle
+                self.rest_isr_cycle -= rest_cycle
+                return False
+        for isr in self.isrs:
+            if isr.task_state == cfg_p3s.TaskState.RUNNING:
+                rest_cycle = self.current_isr.restart((self.cycle + running_cycle), rest_cycle)
+            elif isr.task_state == cfg_p3s.TaskState.READY:
+                self.current_isr = isr
+                self.current_isr.task_state = cfg_p3s.TaskState.RUNNING
+                rest_cycle = self.current_isr.restart((self.cycle + running_cycle), rest_cycle)
+            elif isr.task_state == cfg_p3s.TaskState.WAITING:
+                if isr.interrupt(self.cycle + running_cycle):
+                    # Interrupted!
+                    if not self.current_isr == None:
+                        self.current_isr.task_state = cfg_p3s.TaskState.READY
+                    if not self.current_task == None:
+                        self.current_task.task_state = cfg_p3s.TaskState.READY
+                        self.current_task = None
+                    self.current_isr = isr
+                    self.current_isr.task_state = cfg_p3s.TaskState.RUNNING
+                    rest_cycle = self.current_isr.restart((self.cycle + running_cycle), rest_cycle)
+                else:
+                    continue
+            else:
+                continue
+            # After restart()
+            if self.current_isr and self.current_isr.b_finished:
+                self.current_isr.current_loc = self.current_isr.init_loc
+                self.current_isr.task_state = cfg_p3s.TaskState.WAITING
+                self.current_isr = None
+            if rest_cycle == 0:
+                self.cycle += runnable_cycle
+                return False
+            elif self.rest_isr_cycle > 0:
+                if rest_cycle > self.rest_isr_cycle:
+                    rest_cycle -= self.rest_isr_cycle
+                    self.rest_isr_cycle = 0
+                else:
+                    self.rest_isr_cycle -= rest_cycle
+                    self.cycle += runnable_cycle
+                    return False
         # Tasks
         while True:
             if self.current_task == None:
-                if self.rest_delay_cycle > 0:
+                if self.rest_task_cycle > 0:
                     # During task switching
-                    if rest_cycle > self.rest_delay_cycle:
-                        running_cycle += self.rest_delay_cycle
-                        rest_cycle -= self.rest_delay_cycle
-                        self.rest_delay_cycle = 0
+                    if rest_cycle > self.rest_task_cycle:
+                        running_cycle += self.rest_task_cycle
+                        rest_cycle -= self.rest_task_cycle
+                        self.rest_task_cycle = 0
                     else:
                         self.cycle += runnable_cycle
-                        self.rest_delay_cycle -= rest_cycle
+                        self.rest_task_cycle -= rest_cycle
                         return False
                 for task in self.tasks:
                     if task.task_state == cfg_p3s.TaskState.READY:
@@ -326,14 +411,14 @@ class CPU_Model(Model):
             if self.current_task and self.current_task.b_finished:
                 self.cycle += (runnable_cycle - rest_cycle)
                 return True
-            elif self.rest_delay_cycle > 0:
-                if rest_cycle > self.rest_delay_cycle:
-                    rest_cycle -= self.rest_delay_cycle
-                    running_cycle += self.rest_delay_cycle
-                    self.rest_delay_cycle = 0
+            elif self.rest_task_cycle > 0:
+                if rest_cycle > self.rest_task_cycle:
+                    rest_cycle -= self.rest_task_cycle
+                    running_cycle += self.rest_task_cycle
+                    self.rest_task_cycle = 0
                 else:
                     self.cycle += runnable_cycle
-                    self.rest_delay_cycle -= rest_cycle
+                    self.rest_task_cycle -= rest_cycle
                     return False
             else:
                 # Find the highest priority task (one's task_state is READY or RUNNING)
@@ -343,7 +428,7 @@ class CPU_Model(Model):
                         break;
                     elif task.task_state == cfg_p3s.TaskState.READY:
                         # Task switch
-                        if self.current_task.task_state == cfg_p3s.TaskState.RUNNING:
+                        if not self.current_task == None and self.current_task.task_state == cfg_p3s.TaskState.RUNNING:
                             self.current_task.task_state = cfg_p3s.TaskState.READY
                         self.current_task = None
                         break;
@@ -372,6 +457,23 @@ class CPU_Model(Model):
         else:
             self.tasks.append(task)
 
+    def add_isr(self, isr):
+        '''
+        Add new ISR to this CPU.
+        and sort tasks in ascending order of ISR priority.
+            [1] isr : ISR class object
+        '''
+        isr.cpu = self
+        if len(self.isrs) > 0:
+            for x in range(0, len(self.isrs)):
+                if isr.priority > self.isrs[x].priority:
+                    self.isrs.insert(x, isr)
+                    break
+            else:
+                self.isrs.append(isr)
+        else:
+            self.isrs.append(isr)
+
 
 class Channel():
 
@@ -385,15 +487,16 @@ class Channel():
         self.sent_cycle = 0
         self.data = 0
 
-    def send(self, data, global_cycle):
+    def send(self, data, global_cycle, delay):
         '''
         Send data to this channel.
             [1] data : send data
             [2] global_cycle : current cycle
+            [3] delay : network delay
         '''
         self.data = data
         self.b_sent = True
-        self.sent_cycle = global_cycle
+        self.sent_cycle = global_cycle + delay
 
     def recv(self):
         '''

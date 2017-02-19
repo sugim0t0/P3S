@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 
-''' 3 tasks on mbed OS 5
+''' 3 tasks and 1 ISR on mbed OS 5
+    and 1 core H/W model on another mbed OS 5
 '''
 
-__version__ = "1.3"
+__version__ = "1.0"
 __date__    = "19 Feb. 2017"
 __author__  = "Shun SUGIMOTO <sugimoto.shun@gmail.com>"
 
@@ -17,17 +18,18 @@ import mbed_conf
 # signal update
 def wait_signal_update(task, sig_id, delay):
     task.signal.wait_signal(task, sig_id)
-    task.cpu.rest_task_cycle = delay
     task.cpu.current_task = None
+    task.cpu.rest_task_cycle = delay
 
 def set_signal_update(task, dst_task, sig_id, delay):
     b_changed = task.signal.set_signal(dst_task, sig_id)
-    if b_changed and dst_task.priority > task.priority:
-        task.cpu.rest_task_cycle = delay + mbed_conf.WAIT_SIG_DELAY
-    else:
-        task.cpu.rest_task_cycle = delay
     task.task_state = cfg_p3s.TaskState.READY
     task.cpu.current_task = None
+    task.cpu.rest_task_cycle = delay
+
+def set_signal_update_from_isr(isr, dst_task, sig_id, delay):
+    b_changed = isr.signal.set_signal(dst_task, sig_id)
+    isr.cpu.rest_isr_cycle = mbed_conf.ISR_OVERHEAD
 
 # Application task
 class TransAppMpFull(p3s.Trans):
@@ -100,7 +102,7 @@ class ApplicationTask(p3s.Task):
         super().__init__(name, priority)
         self.rest_of_frame = mbed_conf.NUM_OF_FRAME
 
-# Checksum calculation task
+# Checksum driver task
 class TransCksmFqNoPut(p3s.Trans):
     def guard(self, current_cycle):
         if mbed_conf.FQ_UNUSED == mbed_conf.FQ_MAX:
@@ -124,9 +126,11 @@ class TransCksmFqGet(p3s.Trans):
     def get_delay(self):
         return mbed_conf.DELAY_UNIT
 
-class TransCksmCalc(p3s.Trans):
-    def get_delay(self):
-        return (3 * (mbed_conf.F_SIZE / 128))
+class TransCksmKick(p3s.Trans):
+    def update(self, current_cycle):
+        self.channel.send(1, current_cycle, mbed_conf.CH_SEND_DELAY) # Checksum calc. request to H/W
+        wait_signal_update(self.proc, mbed_conf.SignalID.SIGNAL_CALC_FINISHED, mbed_conf.WAIT_SIG_DELAY)
+        return True
 
 class TransCksmNextFrame(p3s.Trans):
     def guard(self, current_cycle):
@@ -203,12 +207,39 @@ class CleanupTask(p3s.Task):
         super().__init__(name, priority)
         self.rest_of_frame = mbed_conf.NUM_OF_FRAME
 
+# Checksum calc. ISR
+class TransIsrInterrupt(p3s.Trans):
+    def sync(self):
+        data = self.channel.recv()
+    def update(self, current_cycle):
+        set_signal_update_from_isr(self.proc, self.sig_task, mbed_conf.SignalID.SIGNAL_CALC_FINISHED, mbed_conf.SET_SIG_DELAY)
+        # ISR operation is finished
+        self.proc.b_finished = True
+        return False
+
+# Checksum calc. H/W
+class TransHwRecvReq(p3s.Trans):
+    def sync(self):
+        data = self.channel.recv()
+
+class TransHwCalc(p3s.Trans):
+    def get_delay(self):
+        return (3 * (mbed_conf.F_SIZE / 128))
+    def update(self, current_cycle):
+        self.channel.send(1, current_cycle, mbed_conf.CH_SEND_DELAY)
+
 # main
 if __name__ == "__main__":
 
     app_task = ApplicationTask("APP_TASK", mbed_conf.APP_TASK_PRIORITY)
     cksm_task = p3s.Task("CKSM_TASK", mbed_conf.CKSM_TASK_PRIORITY)
     clup_task = CleanupTask("CLUP_TASK", mbed_conf.CLUP_TASK_PRIORITY)
+    cksm_isr = p3s.ISR("CKSM_ISR", cfg_p3s.TaskPriority.PRIORITY_REALTIME)
+    cksm_hw_core = p3s.Process("CKSM_HW")
+
+    # channel
+    ch_start_cksm = p3s.Channel("CH_START_CKSM")
+    ch_finish_cksm = p3s.Channel("CH_FINISH_CKSM")
 
     # construct Application task model
     app_loc1 = p3s.Location("APP_MPOOL_ALLOC", False)
@@ -238,7 +269,7 @@ if __name__ == "__main__":
     cksm_loc3 = p3s.Location("CKSM_CQ_PUT", False)
     cksm_tr1 = TransCksmFqNoPut(cksm_task, None, False, cksm_loc1, None)
     cksm_tr2 = TransCksmFqGet(cksm_task, None, False, cksm_loc2, app_task)
-    cksm_tr3 = TransCksmCalc(cksm_task, None, False, cksm_loc3, None)
+    cksm_tr3 = TransCksmKick(cksm_task, ch_start_cksm, True, cksm_loc3, cksm_isr)
     cksm_tr4 = TransCksmNextFrame(cksm_task, None, False, cksm_loc1, clup_task)
     cksm_tr5 = TransCksmCqFull(cksm_task, None, False, cksm_loc3, None)
     cksm_loc1.add_trans(cksm_tr1)
@@ -270,14 +301,33 @@ if __name__ == "__main__":
     clup_task.add_location(clup_loc3, False)
     clup_task.add_location(clup_loc4, False)
 
+    # construct checksum ISR model
+    isr_loc1 = p3s.Location("ISR_INIT", False)
+    isr_tr1 = TransIsrInterrupt(cksm_isr, ch_finish_cksm, False, isr_loc1, cksm_task)
+    isr_loc1.add_trans(isr_tr1)
+    cksm_isr.add_location(isr_loc1, True)
+
     # construct CPU model
     cpu = p3s.CPU_Model("CPU", mbed_conf.CPU_CLOCK)
     cpu.add_task(app_task)
     cpu.add_task(cksm_task)
     cpu.add_task(clup_task)
+    cpu.add_isr(cksm_isr)
+
+    # construct checksum H/W model
+    cksm_hw_loc1 = p3s.Location("CKSM_HW_WAIT_REQ", False)
+    cksm_hw_loc2 = p3s.Location("CKSM_HW_CALC", False)
+    cksm_hw_tr1 = TransHwRecvReq(cksm_hw_core, ch_start_cksm, False, cksm_hw_loc2, None)
+    cksm_hw_tr2 = TransHwCalc(cksm_hw_core, ch_finish_cksm, True, cksm_hw_loc1, None)
+    cksm_hw_loc1.add_trans(cksm_hw_tr1)
+    cksm_hw_loc2.add_trans(cksm_hw_tr2)
+    cksm_hw_core.add_location(cksm_hw_loc1, True)
+    cksm_hw_core.add_location(cksm_hw_loc2, False)
+    cksm_hw = p3s.HW_Model("CKSM_HW", mbed_conf.CPU_CLOCK, cksm_hw_core) 
     
     sim = p3s.P3S(1)
     sim.add_cpu(cpu)
+    sim.add_hw(cksm_hw)
 
     sim.simulate()
 

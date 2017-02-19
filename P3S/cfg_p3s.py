@@ -12,9 +12,11 @@ class TaskState(Enum):
     RUNNING  = 3
 
 class TaskPriority(IntEnum):
-    PRIORITY_LOW    = 1
-    PRIORITY_NORMAL = 2
-    PRIORITY_HIGH   = 3
+    PRIORITY_IDLE     = -3
+    PRIORITY_LOW      = -2
+    PRIORITY_NORMAL   =  0
+    PRIORITY_HIGH     =  2
+    PRIORITY_REALTIME =  3 # for ISR (Interrupt Service Routine)
 
 class TransState(Enum):
     TRANS_BEFORE_GET_DELAY = 1
