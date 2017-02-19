@@ -5,6 +5,7 @@
  =================================================================
  Date          Version  Description
  =================================================================
+ 19 Feb. 2017  1.1      Refactored (delete debug print)
  16 Feb. 2017  1.0      Creation
  -----------------------------------------------------------------
  */
@@ -114,7 +115,6 @@ void app_thread(void const *argument) {
     pc.printf("[CPU_APP] Start!\r\n");
   #endif
     t.start();
-//    p_t.start();
     // put payload to Queue
     frame_t *frame;
     for(i=0; i<NUM_OF_FRAME; i++) {
@@ -290,13 +290,7 @@ void offload_thread(void const *argument) {
   #if DEBUG_PRINT
         pc.printf("[HW_OFFL] signal received from CPU!\r\n");
   #endif
-
-    p_t.start();
-    p_t.stop();
-    pc.printf("cksum time: %d usec\r\n", p_t.read_us());
-    p_t.reset();    
         calc_cksum(frames[i]);
-
   #if DEBUG_PRINT
         pc.printf("[HW_OFFL] signal send to CPU.\r\n");
   #endif
