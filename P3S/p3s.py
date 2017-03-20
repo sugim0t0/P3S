@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-''' P3S (Python Parallel Process Simulator)
+''' P3S (Parallel Process Performance Simulator)
 
  Modification History:
  ===========================================================
