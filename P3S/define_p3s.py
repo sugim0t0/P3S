@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-''' Configuration file of P3S lib
+''' Define file of P3S lib
 '''
 
 from enum import Enum, IntEnum

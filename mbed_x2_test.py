@@ -10,7 +10,7 @@ __author__  = "Shun SUGIMOTO <sugimoto.shun@gmail.com>"
 
 # import p3s
 from P3S import p3s
-from P3S import cfg_p3s
+from P3S import define_p3s
 
 # import configuration
 import mbed_conf
@@ -23,7 +23,7 @@ def wait_signal_update(task, sig_id, delay):
 
 def set_signal_update(task, dst_task, sig_id, delay):
     b_changed = task.signal.set_signal(dst_task, sig_id)
-    task.task_state = cfg_p3s.TaskState.READY
+    task.task_state = define_p3s.TaskState.READY
     task.cpu.current_task = None
     task.cpu.rest_task_cycle = delay
 
@@ -92,7 +92,7 @@ class TransAppFinish(p3s.Trans):
         else:
             return False
     def update(self, current_cycle):
-        self.proc.task_state = cfg_p3s.TaskState.INACTIVE
+        self.proc.task_state = define_p3s.TaskState.INACTIVE
         self.proc.cpu.rest_task_cycle = 3 # Task switch delay
         self.proc.cpu.current_task = None
         return False
@@ -234,7 +234,7 @@ if __name__ == "__main__":
     app_task = ApplicationTask("APP_TASK", mbed_conf.APP_TASK_PRIORITY)
     cksm_task = p3s.Task("CKSM_TASK", mbed_conf.CKSM_TASK_PRIORITY)
     clup_task = CleanupTask("CLUP_TASK", mbed_conf.CLUP_TASK_PRIORITY)
-    cksm_isr = p3s.ISR("CKSM_ISR", cfg_p3s.TaskPriority.PRIORITY_REALTIME)
+    cksm_isr = p3s.ISR("CKSM_ISR", define_p3s.TaskPriority.PRIORITY_REALTIME)
     cksm_hw_core = p3s.Process("CKSM_HW")
 
     # channel

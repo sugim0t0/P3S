@@ -9,7 +9,7 @@ __author__  = "Shun SUGIMOTO <sugimoto.shun@gmail.com>"
 
 # import p3s
 from P3S import p3s
-from P3S import cfg_p3s
+from P3S import define_p3s
 
 # import configuration
 import mbed_conf
@@ -26,7 +26,7 @@ def set_signal_update(task, dst_task, sig_id, delay):
         task.cpu.rest_task_cycle = delay + mbed_conf.WAIT_SIG_DELAY
     else:
         task.cpu.rest_task_cycle = delay
-    task.task_state = cfg_p3s.TaskState.READY
+    task.task_state = define_p3s.TaskState.READY
     task.cpu.current_task = None
 
 # Application task
@@ -90,7 +90,7 @@ class TransAppFinish(p3s.Trans):
         else:
             return False
     def update(self, current_cycle):
-        self.proc.task_state = cfg_p3s.TaskState.INACTIVE
+        self.proc.task_state = define_p3s.TaskState.INACTIVE
         self.proc.cpu.rest_task_cycle = 3 # Task switch delay
         self.proc.cpu.current_task = None
         return False

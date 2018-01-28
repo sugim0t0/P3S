@@ -3,7 +3,7 @@
 ''' configuration of mbed_test.py
 '''
 
-from P3S import cfg_p3s
+from P3S import define_p3s
 from enum import IntEnum
 
 # Constant parameters
@@ -20,9 +20,9 @@ CH_SEND_DELAY  = 5 # delay by send channel
 ISR_OVERHEAD   = 7
 DELAY_UNIT     = 3
 
-APP_TASK_PRIORITY  = cfg_p3s.TaskPriority.PRIORITY_LOW
-CKSM_TASK_PRIORITY = cfg_p3s.TaskPriority.PRIORITY_NORMAL
-CLUP_TASK_PRIORITY = cfg_p3s.TaskPriority.PRIORITY_HIGH
+APP_TASK_PRIORITY  = define_p3s.TaskPriority.PRIORITY_LOW
+CKSM_TASK_PRIORITY = define_p3s.TaskPriority.PRIORITY_NORMAL
+CLUP_TASK_PRIORITY = define_p3s.TaskPriority.PRIORITY_HIGH
 
 class SignalID(IntEnum):
     SIGNAL_MPOOL_FREE    = 1

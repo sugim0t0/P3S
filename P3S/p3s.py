@@ -18,7 +18,7 @@ __version__ = "1.4"
 __date__    = "19 Feb. 2017"
 __author__  = "Shun SUGIMOTO <sugimoto.shun@gmail.com>"
 
-from P3S import cfg_p3s
+from P3S import define_p3s
 
 class Process():
 
@@ -61,13 +61,13 @@ class Process():
                     if trans.guard(global_cycle+(accuracy_cycle-runnable_cycle)):
                         trans.sync()
                         self.current_trans = trans
-                        self.trans_state = cfg_p3s.TransState.TRANS_BEFORE_GET_DELAY
+                        self.trans_state = define_p3s.TransState.TRANS_BEFORE_GET_DELAY
                         break
                 else: # There is no transition to be able
                     return runnable_cycle
-            if self.trans_state == cfg_p3s.TransState.TRANS_BEFORE_GET_DELAY:
+            if self.trans_state == define_p3s.TransState.TRANS_BEFORE_GET_DELAY:
                 self.current_trans.rest_cycle = self.current_trans.get_delay()
-                self.trans_state = cfg_p3s.TransState.TRANS_BEFORE_UPDATE
+                self.trans_state = define_p3s.TransState.TRANS_BEFORE_UPDATE
                 if self.current_trans.rest_cycle < 0:
                     return -1
             if runnable_cycle >= 0:
@@ -77,9 +77,9 @@ class Process():
                 else:
                     runnable_cycle -= self.current_trans.rest_cycle
                     self.current_trans.rest_cycle = 0
-            if self.trans_state == cfg_p3s.TransState.TRANS_BEFORE_UPDATE:
+            if self.trans_state == define_p3s.TransState.TRANS_BEFORE_UPDATE:
                 self.current_trans.update(global_cycle+(accuracy_cycle-runnable_cycle))
-                self.trans_state = cfg_p3s.TransState.TRANS_AFTER_UPDATE
+                self.trans_state = define_p3s.TransState.TRANS_AFTER_UPDATE
             self.current_loc = self.current_trans.to_location
             print("@" + self.name + " C:{0} : change location to ".format(global_cycle+(accuracy_cycle-runnable_cycle)) + self.current_loc.name)
             self.current_trans = None
@@ -178,7 +178,7 @@ class Task(Process):
         '''
         super().__init__(name)
         self.priority = priority
-        self.task_state = cfg_p3s.TaskState.READY
+        self.task_state = define_p3s.TaskState.READY
         self.signal = Signal()
         self.wait_sig_id = None
         self.cpu = None
@@ -200,13 +200,13 @@ class Task(Process):
                     if trans.guard(global_cycle+(accuracy_cycle-runnable_cycle)):
                         trans.sync()
                         self.current_trans = trans
-                        self.trans_state = cfg_p3s.TransState.TRANS_BEFORE_GET_DELAY
+                        self.trans_state = define_p3s.TransState.TRANS_BEFORE_GET_DELAY
                         break
                 else: # There is no transition to be able
                     return runnable_cycle
-            if self.trans_state == cfg_p3s.TransState.TRANS_BEFORE_GET_DELAY:
+            if self.trans_state == define_p3s.TransState.TRANS_BEFORE_GET_DELAY:
                 self.current_trans.rest_cycle = self.current_trans.get_delay()
-                self.trans_state = cfg_p3s.TransState.TRANS_BEFORE_UPDATE
+                self.trans_state = define_p3s.TransState.TRANS_BEFORE_UPDATE
                 if self.current_trans.rest_cycle < 0:
                     return -1
             if runnable_cycle >= 0:
@@ -216,9 +216,9 @@ class Task(Process):
                 else:
                     runnable_cycle -= self.current_trans.rest_cycle
                     self.current_trans.rest_cycle = 0
-            if self.trans_state == cfg_p3s.TransState.TRANS_BEFORE_UPDATE:
+            if self.trans_state == define_p3s.TransState.TRANS_BEFORE_UPDATE:
                 b_event = self.current_trans.update(global_cycle+(accuracy_cycle-runnable_cycle))
-                self.trans_state = cfg_p3s.TransState.TRANS_AFTER_UPDATE
+                self.trans_state = define_p3s.TransState.TRANS_AFTER_UPDATE
                 if b_event:
                     return runnable_cycle
             self.current_loc = self.current_trans.to_location
@@ -239,7 +239,7 @@ class ISR(Task):
             [2] priority : task priority
         '''
         super().__init__(name, priority)
-        self.task_state = cfg_p3s.TaskState.WAITING
+        self.task_state = define_p3s.TaskState.WAITING
         self.init_loc = None
 
     def interrupt(self, current_cycle):
@@ -348,22 +348,22 @@ class CPU_Model(Model):
                 self.rest_isr_cycle -= rest_cycle
                 return False
         for isr in self.isrs:
-            if isr.task_state == cfg_p3s.TaskState.RUNNING:
+            if isr.task_state == define_p3s.TaskState.RUNNING:
                 rest_cycle = self.current_isr.restart((self.cycle + running_cycle), rest_cycle)
-            elif isr.task_state == cfg_p3s.TaskState.READY:
+            elif isr.task_state == define_p3s.TaskState.READY:
                 self.current_isr = isr
-                self.current_isr.task_state = cfg_p3s.TaskState.RUNNING
+                self.current_isr.task_state = define_p3s.TaskState.RUNNING
                 rest_cycle = self.current_isr.restart((self.cycle + running_cycle), rest_cycle)
-            elif isr.task_state == cfg_p3s.TaskState.WAITING:
+            elif isr.task_state == define_p3s.TaskState.WAITING:
                 if isr.interrupt(self.cycle + running_cycle):
                     # Interrupted!
                     if not self.current_isr == None:
-                        self.current_isr.task_state = cfg_p3s.TaskState.READY
+                        self.current_isr.task_state = define_p3s.TaskState.READY
                     if not self.current_task == None:
-                        self.current_task.task_state = cfg_p3s.TaskState.READY
+                        self.current_task.task_state = define_p3s.TaskState.READY
                         self.current_task = None
                     self.current_isr = isr
-                    self.current_isr.task_state = cfg_p3s.TaskState.RUNNING
+                    self.current_isr.task_state = define_p3s.TaskState.RUNNING
                     rest_cycle = self.current_isr.restart((self.cycle + running_cycle), rest_cycle)
                 else:
                     continue
@@ -372,7 +372,7 @@ class CPU_Model(Model):
             # After restart()
             if self.current_isr and self.current_isr.b_finished:
                 self.current_isr.current_loc = self.current_isr.init_loc
-                self.current_isr.task_state = cfg_p3s.TaskState.WAITING
+                self.current_isr.task_state = define_p3s.TaskState.WAITING
                 self.current_isr = None
             if rest_cycle == 0:
                 self.cycle += runnable_cycle
@@ -399,9 +399,9 @@ class CPU_Model(Model):
                         self.rest_task_cycle -= rest_cycle
                         return False
                 for task in self.tasks:
-                    if task.task_state == cfg_p3s.TaskState.READY:
+                    if task.task_state == define_p3s.TaskState.READY:
                         self.current_task = task
-                        self.current_task.task_state = cfg_p3s.TaskState.RUNNING
+                        self.current_task.task_state = define_p3s.TaskState.RUNNING
                         break
                 else: # All tasks are WAITING
                     self.cycle += runnable_cycle
@@ -423,13 +423,13 @@ class CPU_Model(Model):
             else:
                 # Find the highest priority task (one's task_state is READY or RUNNING)
                 for task in self.tasks:
-                    if task.task_state == cfg_p3s.TaskState.RUNNING:
+                    if task.task_state == define_p3s.TaskState.RUNNING:
                         # No task switch
                         break;
-                    elif task.task_state == cfg_p3s.TaskState.READY:
+                    elif task.task_state == define_p3s.TaskState.READY:
                         # Task switch
-                        if not self.current_task == None and self.current_task.task_state == cfg_p3s.TaskState.RUNNING:
-                            self.current_task.task_state = cfg_p3s.TaskState.READY
+                        if not self.current_task == None and self.current_task.task_state == define_p3s.TaskState.RUNNING:
+                            self.current_task.task_state = define_p3s.TaskState.READY
                         self.current_task = None
                         break;
                 else: # All tasks are WAITING
@@ -514,8 +514,8 @@ class Signal():
         '''
         Constructor of Signal class.
         '''
-        self.wait_id = cfg_p3s.SIGNAL_ID_NO_WAIT
-        self.tsk_pri = cfg_p3s.SIGNAL_INIT_PRI
+        self.wait_id = define_p3s.SIGNAL_ID_NO_WAIT
+        self.tsk_pri = define_p3s.SIGNAL_INIT_PRI
 
     def set_signal(self, dst_task, sig_id):
         '''
@@ -526,10 +526,10 @@ class Signal():
             [1] dst_task : Task class object to be notified
             [2] sig_id : signal ID
         '''
-        if dst_task.task_state == cfg_p3s.TaskState.WAITING and dst_task.signal.wait_id == sig_id:
-            dst_task.task_state = cfg_p3s.TaskState.READY
-            self.wait_id = cfg_p3s.SIGNAL_ID_NO_WAIT
-            self.tsk_pri = cfg_p3s.SIGNAL_INIT_PRI
+        if dst_task.task_state == define_p3s.TaskState.WAITING and dst_task.signal.wait_id == sig_id:
+            dst_task.task_state = define_p3s.TaskState.READY
+            self.wait_id = define_p3s.SIGNAL_ID_NO_WAIT
+            self.tsk_pri = define_p3s.SIGNAL_INIT_PRI
             return True
         else:
             return False
@@ -542,7 +542,7 @@ class Signal():
         '''
         self.wait_id = sig_id
         self.tsk_pri = src_task.priority
-        src_task.task_state = cfg_p3s.TaskState.WAITING
+        src_task.task_state = define_p3s.TaskState.WAITING
 
 
 class P3S():
